@@ -26,8 +26,13 @@ const USE_IMGBB = !s3 && !!IMGBB_API_KEY;
 const router = express.Router();
 
 const UPLOAD_DIR = path.join(__dirname, '..', '..', 'uploads');
-if (!fs.existsSync(UPLOAD_DIR)) {
-  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+const USE_LOCAL_DISK = !s3 && !USE_IMGBB;
+if (USE_LOCAL_DISK && !fs.existsSync(UPLOAD_DIR)) {
+  try {
+    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+  } catch (err) {
+    console.warn('[upload] 无法创建上传目录:', err.message);
+  }
 }
 
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
