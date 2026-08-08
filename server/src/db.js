@@ -4,17 +4,31 @@ const path = require('path');
 let client = null;
 let initPromise = null;
 
+let createClientCache = null;
+function getCreateClient() {
+  if (!createClientCache) {
+    try {
+      createClientCache = require('@libsql/client').createClient;
+    } catch (err) {
+      throw new Error(`@libsql/client 加载失败: ${err.message}`);
+    }
+  }
+  return createClientCache;
+}
+
 function getClient() {
   if (!client) {
-    const { createClient } = require('@libsql/client');
+    const createClient = getCreateClient();
     const url = process.env.TURSO_DATABASE_URL;
-    if (!url || url === 'file::memory:' || !process.env.TURSO_AUTH_TOKEN) {
-      console.warn('[db] TURSO 环境变量未配置，使用内存数据库');
+    const token = process.env.TURSO_AUTH_TOKEN;
+    if (!url || !token) {
+      console.warn('[db] TURSO_DATABASE_URL/TURSO_AUTH_TOKEN 未配置，使用内存数据库');
     }
     client = createClient({
       url: url || 'file::memory:',
-      authToken: process.env.TURSO_AUTH_TOKEN,
+      authToken: token,
     });
+    console.log('[db] Turso client 创建完成');
   }
   return client;
 }

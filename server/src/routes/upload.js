@@ -5,29 +5,42 @@ const multer = require('multer');
 const { requireAuth } = require('../middleware/auth');
 
 let s3 = null;
-if (process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY && process.env.R2_SECRET_KEY) {
-  const { S3Client } = require('@aws-sdk/client-s3');
-  s3 = new S3Client({
-    region: 'auto',
-    endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
-    credentials: {
-      accessKeyId: process.env.R2_ACCESS_KEY,
-      secretAccessKey: process.env.R2_SECRET_KEY,
-    },
-  });
+let s3InitDone = false;
+function getS3() {
+  if (!s3InitDone) {
+    s3InitDone = true;
+    if (process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY && process.env.R2_SECRET_KEY) {
+      try {
+        const { S3Client } = require('@aws-sdk/client-s3');
+        s3 = new S3Client({
+          region: 'auto',
+          endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+          credentials: {
+            accessKeyId: process.env.R2_ACCESS_KEY,
+            secretAccessKey: process.env.R2_SECRET_KEY,
+          },
+        });
+        console.log('[upload] R2 S3 客户端已初始化');
+      } catch (err) {
+        console.error('[upload] R2 S3 客户端初始化失败:', err.message);
+      }
+    }
+  }
+  return s3;
 }
 
 const R2_BUCKET = process.env.R2_BUCKET || 'campus-forum-uploads';
 const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL;
 const IMGBB_API_KEY = process.env.IMGBB_API_KEY;
 
-const USE_IMGBB = !s3 && !!IMGBB_API_KEY;
+function getImgbbKey() { return process.env.IMGBB_API_KEY; }
+function useImgbb() { return !getS3() && !!getImgbbKey(); }
+function useLocalDisk() { return !getS3() && !useImgbb(); }
 
 const router = express.Router();
 
 const UPLOAD_DIR = path.join(__dirname, '..', '..', 'uploads');
-const USE_LOCAL_DISK = !s3 && !USE_IMGBB;
-if (USE_LOCAL_DISK && !fs.existsSync(UPLOAD_DIR)) {
+if (useLocalDisk() && !fs.existsSync(UPLOAD_DIR)) {
   try {
     fs.mkdirSync(UPLOAD_DIR, { recursive: true });
   } catch (err) {
@@ -43,7 +56,7 @@ const EXT_MAP = {
   'image/webp': '.webp',
 };
 
-const storage = (s3 || USE_IMGBB)
+const storage = (getS3() || useImgbb())
   ? multer.memoryStorage()
   : multer.diskStorage({
       destination: (req, file, cb) => cb(null, UPLOAD_DIR),
@@ -68,7 +81,7 @@ const upload = multer({
 async function uploadToImgbb(buffer, mimetype) {
   const base64 = buffer.toString('base64');
   const formData = new URLSearchParams();
-  formData.append('key', IMGBB_API_KEY);
+  formData.append('key', getImgbbKey());
   formData.append('image', base64);
 
   const res = await fetch('https://api.imgbb.com/1/upload', {
@@ -106,11 +119,12 @@ router.post('/', requireAuth, async (req, res) => {
     return res.status(400).json({ message: '请选择图片' });
   }
 
-  if (s3) {
+  const s3Client = getS3();
+  if (s3Client) {
     const { PutObjectCommand } = require('@aws-sdk/client-s3');
     const ext = EXT_MAP[req.file.mimetype] || '.png';
     const key = `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
-    await s3.send(new PutObjectCommand({
+    await s3Client.send(new PutObjectCommand({
       Bucket: R2_BUCKET,
       Key: key,
       Body: req.file.buffer,
@@ -120,7 +134,7 @@ router.post('/', requireAuth, async (req, res) => {
     return res.status(201).json({ url });
   }
 
-  if (USE_IMGBB) {
+  if (useImgbb()) {
     try {
       const url = await uploadToImgbb(req.file.buffer, req.file.mimetype);
       return res.status(201).json({ url });
