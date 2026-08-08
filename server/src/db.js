@@ -34,8 +34,7 @@ function init() {
   return initPromise;
 }
 
-// 模块加载时启动初始化
-init();
+// 数据库初始化延迟到首次请求时执行（避免 Vercel 冷启动 require 阶段阻塞）
 
 // 提供与原 node:sqlite 兼容的接口（返回 Promise）
 function prepare(sql) {
