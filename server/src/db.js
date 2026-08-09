@@ -35,7 +35,7 @@ function getClient() {
 
 function init() {
   if (!initPromise) {
-    initPromise = (async () => {
+    const initTask = (async () => {
       const c = getClient();
       const schemaPath = path.join(__dirname, 'schema.sql');
       const schema = fs.readFileSync(schemaPath, 'utf8');
@@ -52,7 +52,14 @@ function init() {
         console.log('[db] 已写入种子数据');
       }
       console.log('[db] 初始化完成');
-    })().catch((err) => {
+    })();
+    // 初始化超时兜底：15 秒未完成就抛错（Vercel 函数总超时 10s，这里留余量）
+    initPromise = Promise.race([
+      initTask,
+      new Promise((_, rej) =>
+        setTimeout(() => rej(new Error('[db] 初始化超时 (Turso 连接失败或 schema 卡住)')), 15000)
+      ),
+    ]).catch((err) => {
       console.error('[db] 初始化失败:', err.message);
       initPromise = null;
       throw err;

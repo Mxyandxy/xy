@@ -1,4 +1,5 @@
-require('express-async-errors');
+require('dotenv').config();
+// 注意：不使用 express-async-errors（Serverless 环境易卡住未处理 Promise）
 const express = require('express');
 const cors = require('cors');
 const authRoutes = require('./routes/auth');
