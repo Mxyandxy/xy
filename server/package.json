@@ -4,6 +4,9 @@
   "private": true,
   "description": "校园论坛后端",
   "main": "src/index.js",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "dev": "nodemon src/index.js",
     "start": "node src/index.js"
