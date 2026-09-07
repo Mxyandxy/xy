@@ -55,7 +55,7 @@ router.get('/', async (req, res) => {
   }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-  const total = (await db.prepare(`SELECT COUNT(*) AS c FROM posts p ${whereSql}`).get(...params)).c;
+  const total = (await db.prepare(`SELECT COUNT(*)::int AS c FROM posts p ${whereSql}`).get(...params)).c;
 
   const orderBy = sort === 'hot'
     ? 'ORDER BY (p.like_count + p.reply_count) DESC, p.created_at DESC'

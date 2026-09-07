@@ -10,7 +10,7 @@ router.use(requireAuth, requireAdmin);
 
 // 统计概览
 router.get('/stats', async (req, res) => {
-  const count = async (table) => (await db.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get()).c;
+  const count = async (table) => (await db.prepare(`SELECT COUNT(*)::int AS c FROM ${table}`).get()).c;
   res.json({
     userCount: await count('users'),
     postCount: await count('posts'),
@@ -28,7 +28,7 @@ router.get('/users', async (req, res) => {
   const like = `%${keyword}%`;
   const params = keyword ? [like, like] : [];
 
-  const total = (await db.prepare(`SELECT COUNT(*) AS c FROM users ${where}`).get(...params)).c;
+  const total = (await db.prepare(`SELECT COUNT(*)::int AS c FROM users ${where}`).get(...params)).c;
   const rows = await db.prepare(`
     SELECT id, username, nickname, avatar_color, role, status, created_at
     FROM users ${where}
@@ -77,7 +77,7 @@ router.get('/posts', async (req, res) => {
   const like = `%${keyword}%`;
   const params = keyword ? [like, like] : [];
 
-  const total = (await db.prepare(`SELECT COUNT(*) AS c FROM posts p ${where}`).get(...params)).c;
+  const total = (await db.prepare(`SELECT COUNT(*)::int AS c FROM posts p ${where}`).get(...params)).c;
   const rows = await db.prepare(`
     SELECT p.id, p.title, p.is_pinned, p.is_featured, p.like_count, p.reply_count, p.created_at,
            u.id AS author_id, u.nickname AS author_nickname,
@@ -121,7 +121,7 @@ router.delete('/replies/:id', async (req, res) => {
   }
   await db.batch([
     { sql: 'DELETE FROM replies WHERE id = ?', args: [reply.id] },
-    { sql: 'UPDATE posts SET reply_count = MAX(0, reply_count - 1) WHERE id = ?', args: [reply.post_id] },
+    { sql: 'UPDATE posts SET reply_count = GREATEST(0, reply_count - 1) WHERE id = ?', args: [reply.post_id] },
   ]);
   res.json({ message: '删除成功' });
 });

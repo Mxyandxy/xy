@@ -63,7 +63,7 @@ router.delete('/replies/:id', requireAuth, async (req, res) => {
 
   await db.batch([
     { sql: 'DELETE FROM replies WHERE id = ?', args: [reply.id] },
-    { sql: 'UPDATE posts SET reply_count = MAX(0, reply_count - 1) WHERE id = ?', args: [reply.post_id] },
+    { sql: 'UPDATE posts SET reply_count = GREATEST(0, reply_count - 1) WHERE id = ?', args: [reply.post_id] },
   ]);
 
   res.json({ message: '删除成功' });

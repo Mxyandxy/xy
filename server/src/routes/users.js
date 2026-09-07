@@ -35,7 +35,7 @@ router.get('/:username', async (req, res) => {
     return res.status(404).json({ message: '用户不存在' });
   }
 
-  const postCount = (await db.prepare('SELECT COUNT(*) AS c FROM posts WHERE user_id = ?').get(user.id)).c;
+  const postCount = (await db.prepare('SELECT COUNT(*)::int AS c FROM posts WHERE user_id = ?').get(user.id)).c;
 
   res.json({
     user: {

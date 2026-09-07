@@ -11,7 +11,7 @@ router.use(requireAuth);
 router.get('/', async (req, res) => {
   const { page, pageSize, offset } = getPagination(req.query);
 
-  const total = (await db.prepare('SELECT COUNT(*) AS c FROM notifications WHERE user_id = ?').get(req.user.id)).c;
+  const total = (await db.prepare('SELECT COUNT(*)::int AS c FROM notifications WHERE user_id = ?').get(req.user.id)).c;
   const rows = await db.prepare(`
     SELECT n.id, n.type, n.post_id, n.reply_id, n.content, n.is_read, n.created_at,
            u.id AS actor_id, u.nickname AS actor_nickname, u.avatar_color AS actor_avatar_color,
@@ -40,7 +40,7 @@ router.get('/', async (req, res) => {
 // 未读数
 router.get('/unread-count', async (req, res) => {
   const row = await db.prepare(
-    'SELECT COUNT(*) AS c FROM notifications WHERE user_id = ? AND is_read = 0'
+    'SELECT COUNT(*)::int AS c FROM notifications WHERE user_id = ? AND is_read = 0'
   ).get(req.user.id);
   res.json({ count: row.c });
 });

@@ -8,7 +8,7 @@ const router = express.Router();
 router.get('/', async (req, res) => {
   const boards = await db.prepare(`
     SELECT b.id, b.name, b.description, b.sort_order, b.created_at,
-           (SELECT COUNT(*) FROM posts p WHERE p.board_id = b.id) AS post_count
+           (SELECT COUNT(*)::int FROM posts p WHERE p.board_id = b.id) AS post_count
     FROM boards b
     ORDER BY b.sort_order ASC, b.id ASC
   `).all();
@@ -32,7 +32,7 @@ router.get('/:id', async (req, res) => {
 
   const { page, pageSize, offset } = getPagination(req.query);
 
-  const total = (await db.prepare('SELECT COUNT(*) AS c FROM posts WHERE board_id = ?').get(board.id)).c;
+  const total = (await db.prepare('SELECT COUNT(*)::int AS c FROM posts WHERE board_id = ?').get(board.id)).c;
   const rows = await db.prepare(`
     SELECT p.id, p.title, p.content, p.is_pinned, p.is_featured, p.like_count, p.reply_count, p.created_at,
            u.id AS author_id, u.nickname AS author_nickname, u.avatar_color AS author_avatar_color

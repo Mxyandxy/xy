@@ -1,65 +1,82 @@
+// PostgreSQL / Supabase 数据层
+// 对外保持与原来 libsql 版本完全一致的使用方式：
+//   db.prepare(sql).get(...) / .all(...) / .run(...)
+//   db.getClient().execute({ sql, args })
+//   db.batch([{ sql, args }]) / db.exec(sql)
+// 这样 routes/*.js 和 seed.js 一行都不用改。
+//
+// 内部做的三件适配：
+//   1. 占位符 ? -> $1 $2 ...
+//   2. INSERT 自动追加 RETURNING id，补出 lastInsertRowid
+//   3. 连不上时直接报错，不再悄悄退化成内存库
+
 const fs = require('fs');
 const path = require('path');
 
-let client = null;
+// Postgres 的 int8 (OID 20) 超过 JS 安全整数范围，pg 默认转成字符串返回。
+// 我们的 created_at / updated_at 是毫秒时间戳（< 2^53），转数字是安全的，
+// 不转的话前端拿到的是 "1786202999682" 这种字符串，时间格式化会出错。
+const pgTypes = require('pg').types;
+pgTypes.setTypeParser(20, (val) => Number(val));
+
+let pool = null;
 let initPromise = null;
 
-let createClientCache = null;
-function getCreateClient() {
-  if (!createClientCache) {
-    try {
-      createClientCache = require('@libsql/client').createClient;
-    } catch (err) {
-      throw new Error(`@libsql/client 加载失败: ${err.message}`);
+function getPool() {
+  if (!pool) {
+    const url = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
+    if (!url) {
+      throw new Error('DATABASE_URL 未配置，请在环境变量里填 Supabase 连接串');
     }
+    const { Pool } = require('pg');
+    const isLocal = /localhost|127\.0\.0\.1/.test(url);
+    pool = new Pool({
+      connectionString: url,
+      // Supabase 要求 SSL；自签证书场景关闭严格校验
+      ssl: isLocal ? false : { rejectUnauthorized: false },
+      max: 5,
+      connectionTimeoutMillis: 15000,
+      idleTimeoutMillis: 30000,
+    });
+    pool.on('error', (err) => console.error('[db] pool error:', err.message));
+    console.log('[db] Postgres 连接池已创建');
   }
-  return createClientCache;
+  return pool;
 }
 
-function getClient() {
-  if (!client) {
-    const createClient = getCreateClient();
-    const url = process.env.TURSO_DATABASE_URL;
-    const token = process.env.TURSO_AUTH_TOKEN;
-    if (!url || !token) {
-      console.warn('[db] TURSO_DATABASE_URL/TURSO_AUTH_TOKEN 未配置，使用内存数据库');
-    }
-    client = createClient({
-      url: url || 'file::memory:',
-      authToken: token,
-    });
-    console.log('[db] Turso client 创建完成');
-  }
-  return client;
+function toPositional(sql) {
+  let i = 0;
+  return sql.replace(/\?/g, () => `$${++i}`);
+}
+
+function withReturning(pgSql, rawSql) {
+  const isInsert = /^\s*insert\s+into/i.test(rawSql);
+  if (isInsert && !/returning/i.test(rawSql)) return pgSql + ' RETURNING id';
+  return pgSql;
+}
+
+async function query(sql, args) {
+  return getPool().query(sql, args);
 }
 
 function init() {
   if (!initPromise) {
-    const initTask = (async () => {
-      const c = getClient();
-      const schemaPath = path.join(__dirname, 'schema.sql');
+    const task = (async () => {
+      const schemaPath = path.join(__dirname, 'schema.pg.sql');
       const schema = fs.readFileSync(schemaPath, 'utf8');
-      const schemaClean = schema.replace(/^PRAGMA.*$/gm, '').trim();
-      if (schemaClean) {
-        await c.executeMultiple(schemaClean);
-      }
+      await query(schema);
 
-      const result = await c.execute('SELECT COUNT(*) AS c FROM users');
+      const result = await query('SELECT COUNT(*)::int AS c FROM users');
       const userCount = Number(result.rows[0].c);
       if (userCount === 0) {
         const { seed } = require('./seed');
-        await seed(c);
+        await seed(getClient());
         console.log('[db] 已写入种子数据');
       }
       console.log('[db] 初始化完成');
+      return true;
     })();
-    // 初始化超时兜底：15 秒未完成就抛错（Vercel 函数总超时 10s，这里留余量）
-    initPromise = Promise.race([
-      initTask,
-      new Promise((_, rej) =>
-        setTimeout(() => rej(new Error('[db] 初始化超时 (Turso 连接失败或 schema 卡住)')), 15000)
-      ),
-    ]).catch((err) => {
+    initPromise = task.catch((err) => {
       console.error('[db] 初始化失败:', err.message);
       initPromise = null;
       throw err;
@@ -69,36 +86,81 @@ function init() {
 }
 
 function prepare(sql) {
+  const pgSql = toPositional(sql);
   return {
     async get(...args) {
       await init();
-      const result = await getClient().execute({ sql, args });
+      const result = await query(pgSql, args);
       return result.rows[0] || null;
     },
     async all(...args) {
       await init();
-      const result = await getClient().execute({ sql, args });
+      const result = await query(pgSql, args);
       return result.rows;
     },
     async run(...args) {
       await init();
-      const result = await getClient().execute({ sql, args });
+      const result = await query(withReturning(pgSql, sql), args);
       return {
-        changes: result.rowsAffected,
-        lastInsertRowid: result.lastInsertRowid,
+        changes: result.rowCount,
+        lastInsertRowid: result.rows[0] ? result.rows[0].id : null,
       };
+    },
+  };
+}
+
+// 供 seed.js 使用：client.execute({ sql, args })
+function getClient() {
+  return {
+    // 注意：这里绝不能 await init()。
+    // seed() 是在 init() 内部被调用的，再调 init() 会 await 到还没完成的
+    // initPromise —— 自己等自己，直接死锁。
+    async execute(stmt) {
+      if (typeof stmt === 'string') {
+        const result = await query(stmt);
+        return { rows: result.rows, rowsAffected: result.rowCount, lastInsertRowid: null };
+      }
+      const rawSql = stmt.sql;
+      const result = await query(withReturning(toPositional(rawSql), rawSql), stmt.args || []);
+      return {
+        rows: result.rows,
+        rowsAffected: result.rowCount,
+        lastInsertRowid: result.rows[0] ? result.rows[0].id : null,
+      };
+    },
+    async executeMultiple(sql) {
+      const result = await query(sql);
+      return { rows: result.rows, rowsAffected: result.rowCount };
     },
   };
 }
 
 async function exec(sql) {
   await init();
-  await getClient().executeMultiple(sql);
+  await query(sql);
 }
 
+// 事务批量执行：batch([{ sql, args }])
 async function batch(statements) {
   await init();
-  return getClient().batch(statements, 'write');
+  const client = await getPool().connect();
+  try {
+    await client.query('BEGIN');
+    const results = [];
+    for (const stmt of statements) {
+      const rawSql = typeof stmt === 'string' ? stmt : stmt.sql;
+      const args = typeof stmt === 'string' ? [] : stmt.args || [];
+      const result = await client.query(withReturning(toPositional(rawSql), rawSql), args);
+      results.push({ rows: result.rows, rowsAffected: result.rowCount });
+    }
+    await client.query('COMMIT');
+    return results;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
-module.exports = { getClient, prepare, exec, batch, init };
+module.exports = { getClient, prepare, exec, batch, init, getPool };
