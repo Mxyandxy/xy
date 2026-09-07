@@ -34,7 +34,9 @@ function getPool() {
       connectionString: url,
       // Supabase 要求 SSL；自签证书场景关闭严格校验
       ssl: isLocal ? false : { rejectUnauthorized: false },
-      max: 5,
+      // serverless（Vercel）下每个函数实例都持有连接，免费 Supabase 直连只能
+      // 容纳 60 个，超了会爆。给个环境变量旋钮：本地 5、线上 2 够用
+      max: Number(process.env.PG_POOL_MAX) || 5,
       connectionTimeoutMillis: 15000,
       idleTimeoutMillis: 30000,
     });
