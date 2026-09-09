@@ -23,7 +23,12 @@ module.exports = async (req, res) => {
   try {
     const app = await getApp();
     if (req.url && req.url[0] !== '/') req.url = '/' + req.url;
-
+    // 去掉 /api 前缀：Vercel 把 /api/* 路由到本函数，server/src/app.js 注册的路径是 /boards /posts /auth/* 等
+    if (req.url && req.url.startsWith('/api/')) {
+      req.url = req.url.slice(4) || '/';
+    } else if (req.url === '/api') {
+      req.url = '/';
+    }
     await new Promise((resolve) => {
       let done = false;
       const origEnd = res.end;
